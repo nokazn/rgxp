@@ -115,7 +115,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fold_or() {
+    fn test_fold_or_1() {
         let ast = fold_or(vec![AST::Char('a'), AST::Char('b'), AST::Char('c')]);
         assert_eq!(
             ast,
@@ -124,5 +124,15 @@ mod tests {
                 Box::new(AST::Or(Box::new(AST::Char('b')), Box::new(AST::Char('c')),)),
             ))
         );
+    }
+    #[test]
+    fn test_fold_or_2() {
+        let ast = fold_or(vec![AST::Char('a')]);
+        assert_eq!(ast, Some(AST::Char('a')));
+    }
+    #[test]
+    fn test_fold_or_3() {
+        let ast = fold_or(vec![]);
+        assert_eq!(ast, None);
     }
 }
