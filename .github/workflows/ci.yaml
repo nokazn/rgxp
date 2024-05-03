@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: DeterminateSystems/flake-checker-action@main
+
+      - name: Check formatting
+        run: nix develop -c cargo fmt --check
+      - name: Run linting
+        run: nix develop -c cargo clippy
+      - name: Run tests
+        run: nix develop -c cargo test --locked --frozen --all-features
+      - name: Build package
+        run: nix build .
