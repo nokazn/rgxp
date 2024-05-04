@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{fmt::Display, mem::take, vec};
+use std::{error::Error, fmt::Display, mem::take, vec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AST {
@@ -79,6 +79,8 @@ impl Display for ParseError {
         }
     }
 }
+
+impl Error for ParseError {}
 
 pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
     enum ParseState {
