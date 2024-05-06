@@ -137,7 +137,7 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
     fold_or(seq_or).ok_or(Box::new(ParseError::Empty))
 }
 
-/// - convert  `+`, `*` or `?` to AST that wraos the previous sequence
+/// - convert  `+`, `*` or `?` to AST that wraps the previous sequence
 /// - return `Err` if no previous sequences in `seq`
 fn eat_plus_star_question(seq: &mut Vec<AST>, ast_type: PSQ, pos: usize) -> Result<(), ParseError> {
     if let Some(prev) = seq.last_mut() {
@@ -189,8 +189,7 @@ fn eat_right_paren(
 }
 
 /// - consume the last sequence and `or` identifier
-///   - ie. consume `abc|`
-/// - return `Err` if no sequences in `seq`
+/// - ie. consume `abc|`
 fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>) {
     if seq.is_empty() {
         // do nothing
