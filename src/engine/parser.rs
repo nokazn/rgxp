@@ -316,5 +316,13 @@ mod tests {
                 AST::Star(Box::new(AST::Char('c')))
             ])),
         },
+        "3" => TestStarCase {
+            input: "a**",
+            expected: Ok(AST::Seq(vec![
+                AST::Star(Box::new(
+                    AST::Star(Box::new(AST::Char('a')))
+                ))
+            ])),
+        },
     );
 }
