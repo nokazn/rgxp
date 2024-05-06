@@ -48,7 +48,7 @@ enum PSQ {
     Question,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ParseError {
     InvalidEscape(usize, char),
     InvalidRightParen(usize),
@@ -171,8 +171,8 @@ fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>, pos: usize) -> Result<(), B
 
 /// escape characters
 fn parse_escape(pos: usize, c: char) -> Result<AST, ParseError> {
-    match c {
-        '\\' | '(' | ')' | '|' | '+' | '*' | '?' => Ok(AST::Char(c)),
+    match Identifier::from(c) {
+        Some(_) => Ok(AST::Char(c)),
         _ => {
             let error = ParseError::InvalidEscape(pos, c);
             Err(error)
@@ -228,27 +228,93 @@ fn fold_or(mut seq_or: Vec<AST>) -> Option<AST> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_each;
+
     use super::*;
 
-    #[test]
-    fn test_fold_or_1() {
-        let ast = fold_or(vec![AST::Char('a'), AST::Char('b'), AST::Char('c')]);
-        assert_eq!(
-            ast,
-            Some(AST::Or(
+    struct TestFoldOrCase {
+        input: Vec<AST>,
+        expected: Option<AST>,
+    }
+
+    test_each!(
+        test_fold_or,
+        |case: TestFoldOrCase| {
+            let ast = fold_or(case.input);
+            assert_eq!(ast, case.expected);
+        },
+        "1" => TestFoldOrCase {
+            input: vec![AST::Char('a'), AST::Char('b'), AST::Char('c')],
+            expected: Some(AST::Or(
                 Box::new(AST::Char('a')),
                 Box::new(AST::Or(Box::new(AST::Char('b')), Box::new(AST::Char('c')),)),
-            ))
-        );
+            )),
+        },
+        "2" => TestFoldOrCase {
+            input: vec![AST::Char('a')],
+            expected: Some(AST::Char('a')),
+        },
+        "3" => TestFoldOrCase {
+            input: vec![],
+            expected: None,
+        },
+    );
+
+    struct TestPlusCase {
+        input: &'static str,
+        expected: Result<AST, Box<ParseError>>,
     }
-    #[test]
-    fn test_fold_or_2() {
-        let ast = fold_or(vec![AST::Char('a')]);
-        assert_eq!(ast, Some(AST::Char('a')));
+
+    test_each!(
+        test_plus,
+        |case: TestPlusCase| {
+            let ast = parse(case.input);
+            assert_eq!(ast, case.expected);
+        },
+        "1" => TestPlusCase {
+            input: "a+",
+            expected: Ok(AST::Seq(vec![
+                AST::Plus(Box::new(AST::Char('a')))
+            ])),
+        },
+        "2" => TestPlusCase {
+            input: "+",
+            expected: Err(Box::new(ParseError::NoPrev(0))),
+        },
+        "3" => TestPlusCase {
+            input: "abc+",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+                AST::Char('b'),
+                AST::Plus(Box::new(AST::Char('c')))
+            ])),
+        },
+    );
+
+    struct TestStarCase {
+        input: &'static str,
+        expected: Result<AST, Box<ParseError>>,
     }
-    #[test]
-    fn test_fold_or_3() {
-        let ast = fold_or(vec![]);
-        assert_eq!(ast, None);
-    }
+
+    test_each!(
+        test_star,
+        |case: TestStarCase| {
+            let ast = parse(case.input);
+            assert_eq!(ast, case.expected);
+        },
+        "1" => TestStarCase {
+            input: "a*",
+            expected: Ok(AST::Seq(vec![
+                AST::Star(Box::new(AST::Char('a')))
+            ])),
+        },
+        "2" => TestStarCase {
+            input: "abc*",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+                AST::Char('b'),
+                AST::Star(Box::new(AST::Char('c')))
+            ])),
+        },
+    );
 }
