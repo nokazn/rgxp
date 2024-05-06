@@ -119,7 +119,7 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
                     eat_right_paren(&mut stack, &mut seq, &mut seq_or, pos)?;
                 }
                 Some(Identifier::Or) => {
-                    eat_or(&mut seq, &mut seq_or, pos)?;
+                    eat_or(&mut seq, &mut seq_or)?;
                 }
                 Some(Identifier::Escape) => {
                     state = ParseState::Escape;
@@ -173,12 +173,13 @@ fn eat_right_paren(
 /// - consume the last sequence and `or` identifier
 ///   - ie. consume `abc|`
 /// - return `Err` if no sequences in `seq`
-fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>, pos: usize) -> Result<(), Box<ParseError>> {
+fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>) -> Result<(), Box<ParseError>> {
     if seq.is_empty() {
-        return Err(Box::new(ParseError::NoPrev(pos)));
+        // do nothing
+    } else {
+        let prev = take(seq);
+        seq_or.push(AST::Seq(prev));
     }
-    let prev = take(seq);
-    seq_or.push(AST::Seq(prev));
     Ok(())
 }
 
@@ -391,19 +392,66 @@ mod tests {
                 Box::new(AST::Seq(vec![AST::Char('*')])),
             )),
         },
-        "or_empty_1" => TestParseCase {
+        "or_empty_single_1" => TestParseCase {
             input: "a|",
             expected: Ok(AST::Seq(vec![
                 AST::Char('a'),
             ])),
         },
+        "or_empty_single_2" => TestParseCase {
+            input: "|a|",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+            ])),
+        },
+        "or_empty_single_3" => TestParseCase {
+            input: "|a",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+            ])),
+        },
+        "or_empty_single_4" => TestParseCase {
+            input: "||a|||",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+            ])),
+        },
+        "or_empty_multiple_1" => TestParseCase {
+            input: "||a|b||",
+            expected: Ok(AST::Or(
+                Box::new(AST::Seq(vec![AST::Char('a')])),
+                Box::new(AST::Seq(vec![AST::Char('b')])),
+            )),
+        },
+        "or_empty_1" => TestParseCase {
+            input: "|",
+            expected: Err(Box::new(ParseError::Empty)),
+        },
         "or_empty_2" => TestParseCase {
-            input: "a||",
-            expected: Err(Box::new(ParseError::NoPrev(2))),
+            input: "|||||||||",
+            expected: Err(Box::new(ParseError::Empty)),
         },
         "or_empty_3" => TestParseCase {
             input: "\\\\|||||",
-            expected: Err(Box::new(ParseError::NoPrev(3))),
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+            ])),
+        },
+        "or_empty_7" => TestParseCase {
+            input: "|a|||b|||c|  ||",
+            expected: Ok(AST::Or(
+                Box::new(AST::Seq(vec![AST::Char('a')])),
+                Box::new(AST::Or(
+                    Box::new(AST::Seq(vec![AST::Char('b')])),
+                    Box::new(AST::Or(
+                        Box::new(AST::Seq(vec![AST::Char('c')])),
+                        Box::new(AST::Seq(vec![
+                            AST::Char(' '),
+                            AST::Char(' '),
+                        ])),
+                    )),
+                )),
+            )),
         },
         "escape_plus_1" => TestParseCase {
             input: "\\+",
