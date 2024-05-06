@@ -51,6 +51,11 @@ enum PSQ {
     Question,
 }
 
+struct StackLayer {
+    seq: Vec<AST>,
+    seq_or: Vec<AST>,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
     InvalidEscape(usize, char),
@@ -85,11 +90,6 @@ impl Display for ParseError {
 
 impl Error for ParseError {}
 
-struct StackLayer {
-    seq: Vec<AST>,
-    seq_or: Vec<AST>,
-}
-
 pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
     enum ParseState {
         Char,
@@ -107,16 +107,9 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
                 Some(Identifier::Plus) => eat_plus_star_question(&mut seq, PSQ::Plus, pos)?,
                 Some(Identifier::Star) => eat_plus_star_question(&mut seq, PSQ::Star, pos)?,
                 Some(Identifier::Question) => eat_plus_star_question(&mut seq, PSQ::Question, pos)?,
-                Some(Identifier::LeftParen) => {
-                    let prev = take(&mut seq);
-                    let prev_or = take(&mut seq_or);
-                    stack.push(StackLayer {
-                        seq: prev,
-                        seq_or: prev_or,
-                    });
-                }
+                Some(Identifier::LeftParen) => eat_left_paren(&mut seq, &mut seq_or, &mut stack),
                 Some(Identifier::RightParen) => {
-                    eat_right_paren(&mut stack, &mut seq, &mut seq_or, pos)?;
+                    eat_right_paren(&mut seq, &mut seq_or, &mut stack, pos)?;
                 }
                 Some(Identifier::Or) => {
                     eat_or(&mut seq, &mut seq_or)?;
@@ -144,10 +137,35 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
     fold_or(seq_or).ok_or(Box::new(ParseError::Empty))
 }
 
+/// - convert  `+`, `*` or `?` to AST that wraos the previous sequence
+/// - return `Err` if no previous sequences in `seq`
+fn eat_plus_star_question(seq: &mut Vec<AST>, ast_type: PSQ, pos: usize) -> Result<(), ParseError> {
+    if let Some(prev) = seq.last_mut() {
+        let ast = match ast_type {
+            PSQ::Plus => AST::Plus(Box::new(prev.clone())),
+            PSQ::Star => AST::Star(Box::new(prev.clone())),
+            PSQ::Question => AST::Question(Box::new(prev.clone())),
+        };
+        *prev = ast;
+        Ok(())
+    } else {
+        Err(ParseError::NoPrev(pos))
+    }
+}
+
+fn eat_left_paren(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>, stack: &mut Vec<StackLayer>) {
+    let prev = take(seq);
+    let prev_or = take(seq_or);
+    stack.push(StackLayer {
+        seq: prev,
+        seq_or: prev_or,
+    });
+}
+
 fn eat_right_paren(
-    stack: &mut Vec<StackLayer>,
     seq: &mut Vec<AST>,
     seq_or: &mut Vec<AST>,
+    stack: &mut Vec<StackLayer>,
     pos: usize,
 ) -> Result<(), Box<ParseError>> {
     if let Some(StackLayer {
@@ -181,22 +199,6 @@ fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>) -> Result<(), Box<ParseErro
         seq_or.push(AST::Seq(prev));
     }
     Ok(())
-}
-
-/// - convert  `+`, `*` or `?` to AST that wraos the previous sequence
-/// - return `Err` if no previous sequences in `seq`
-fn eat_plus_star_question(seq: &mut Vec<AST>, ast_type: PSQ, pos: usize) -> Result<(), ParseError> {
-    if let Some(prev) = seq.last_mut() {
-        let ast = match ast_type {
-            PSQ::Plus => AST::Plus(Box::new(prev.clone())),
-            PSQ::Star => AST::Star(Box::new(prev.clone())),
-            PSQ::Question => AST::Question(Box::new(prev.clone())),
-        };
-        *prev = ast;
-        Ok(())
-    } else {
-        Err(ParseError::NoPrev(pos))
-    }
 }
 
 /// escape characters
