@@ -112,7 +112,7 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
                     eat_right_paren(&mut seq, &mut seq_or, &mut stack, pos)?;
                 }
                 Some(Identifier::Or) => {
-                    eat_or(&mut seq, &mut seq_or)?;
+                    eat_or(&mut seq, &mut seq_or);
                 }
                 Some(Identifier::Escape) => {
                     state = ParseState::Escape;
@@ -191,14 +191,13 @@ fn eat_right_paren(
 /// - consume the last sequence and `or` identifier
 ///   - ie. consume `abc|`
 /// - return `Err` if no sequences in `seq`
-fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>) -> Result<(), Box<ParseError>> {
+fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>) {
     if seq.is_empty() {
         // do nothing
     } else {
         let prev = take(seq);
         seq_or.push(AST::Seq(prev));
     }
-    Ok(())
 }
 
 /// escape characters
@@ -562,6 +561,52 @@ mod tests {
         "escape_escape_5" => TestParseCase {
             input: "\\a",
             expected: Err(Box::new(ParseError::InvalidEscape(1, 'a'))),
+        },
+        "paren_1" => TestParseCase {
+            input: "()",
+            expected: Err(Box::new(ParseError::Empty)),
+        },
+        "paren_2" => TestParseCase {
+            input: "(abc)",
+            expected: Ok(
+                AST::Seq(vec![
+                    AST::Seq(vec![
+                        AST::Char('a'),
+                        AST::Char('b'),
+                        AST::Char('c'),
+                    ]),
+                ]),
+            ),
+        },
+        "paren_or_1" => TestParseCase {
+            input: "(a|b|c)",
+            expected: Ok(
+                AST::Seq(vec![
+                    AST::Or(
+                        Box::new(AST::Seq(vec![AST::Char('a')])),
+                        Box::new(AST::Or(
+                            Box::new(AST::Seq(vec![AST::Char('b')])),
+                            Box::new(AST::Seq(vec![AST::Char('c')])),
+                        )),
+                    ),
+                ]),
+            ),
+        },
+        "no_closing_paren_1" => TestParseCase {
+            input: "(",
+            expected: Err(Box::new(ParseError::NoRightParen)),
+        },
+        "no_closing_paren_2" => TestParseCase {
+            input: "(a|b|c",
+            expected: Err(Box::new(ParseError::NoRightParen)),
+        },
+        "no_opening_paren_1" => TestParseCase {
+            input: "a|b|c)",
+            expected: Err(Box::new(ParseError::InvalidRightParen(5))),
+        },
+        "no_opening_paren_2" => TestParseCase {
+            input: ")",
+            expected: Err(Box::new(ParseError::InvalidRightParen(0))),
         },
     );
 }
