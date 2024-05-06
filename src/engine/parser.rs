@@ -1,3 +1,5 @@
+use strum_macros::EnumIter;
+
 use core::fmt;
 use std::{error::Error, fmt::Display, mem::take, vec};
 
@@ -11,6 +13,7 @@ pub enum AST {
     Seq(Vec<AST>),
 }
 
+#[derive(EnumIter)]
 #[repr(u8)]
 enum Identifier {
     Plus = b'+',
@@ -82,6 +85,11 @@ impl Display for ParseError {
 
 impl Error for ParseError {}
 
+struct StackLayer {
+    seq: Vec<AST>,
+    seq_or: Vec<AST>,
+}
+
 pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
     enum ParseState {
         Char,
@@ -90,21 +98,22 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
 
     let mut seq = vec![];
     let mut seq_or = vec![];
-    let mut stack = vec![];
+    let mut stack: Vec<StackLayer> = vec![];
     let mut state = ParseState::Char;
 
     for (pos, c) in expr.chars().enumerate() {
         match &state {
             ParseState::Char => match Identifier::from(c) {
-                Some(Identifier::Plus) => parse_plus_star_question(&mut seq, PSQ::Plus, pos)?,
-                Some(Identifier::Star) => parse_plus_star_question(&mut seq, PSQ::Star, pos)?,
-                Some(Identifier::Question) => {
-                    parse_plus_star_question(&mut seq, PSQ::Question, pos)?
-                }
+                Some(Identifier::Plus) => eat_plus_star_question(&mut seq, PSQ::Plus, pos)?,
+                Some(Identifier::Star) => eat_plus_star_question(&mut seq, PSQ::Star, pos)?,
+                Some(Identifier::Question) => eat_plus_star_question(&mut seq, PSQ::Question, pos)?,
                 Some(Identifier::LeftParen) => {
                     let prev = take(&mut seq);
                     let prev_or = take(&mut seq_or);
-                    stack.push((prev, prev_or));
+                    stack.push(StackLayer {
+                        seq: prev,
+                        seq_or: prev_or,
+                    });
                 }
                 Some(Identifier::RightParen) => {
                     eat_right_paren(&mut stack, &mut seq, &mut seq_or, pos)?;
@@ -118,8 +127,7 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
                 None => seq.push(AST::Char(c)),
             },
             ParseState::Escape => {
-                let ast = parse_escape(pos, c)?;
-                seq.push(ast);
+                seq.push(parse_escape(pos, c)?);
                 state = ParseState::Char;
             }
         };
@@ -137,12 +145,16 @@ pub fn parse(expr: &str) -> Result<AST, Box<ParseError>> {
 }
 
 fn eat_right_paren(
-    stack: &mut Vec<(Vec<AST>, Vec<AST>)>,
+    stack: &mut Vec<StackLayer>,
     seq: &mut Vec<AST>,
     seq_or: &mut Vec<AST>,
     pos: usize,
 ) -> Result<(), Box<ParseError>> {
-    if let Some((mut prev, prev_or)) = stack.pop() {
+    if let Some(StackLayer {
+        seq: mut prev,
+        seq_or: prev_or,
+    }) = stack.pop()
+    {
         // store the current sequence regardless of preceded `or` identifier
         if !seq.is_empty() {
             seq_or.push(AST::Seq(seq.clone()));
@@ -158,8 +170,9 @@ fn eat_right_paren(
     }
 }
 
-/// consume the last sequence and `or` identifier
-/// ie. consume `abc|`
+/// - consume the last sequence and `or` identifier
+///   - ie. consume `abc|`
+/// - return `Err` if no sequences in `seq`
 fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>, pos: usize) -> Result<(), Box<ParseError>> {
     if seq.is_empty() {
         return Err(Box::new(ParseError::NoPrev(pos)));
@@ -169,23 +182,9 @@ fn eat_or(seq: &mut Vec<AST>, seq_or: &mut Vec<AST>, pos: usize) -> Result<(), B
     Ok(())
 }
 
-/// escape characters
-fn parse_escape(pos: usize, c: char) -> Result<AST, ParseError> {
-    match Identifier::from(c) {
-        Some(_) => Ok(AST::Char(c)),
-        _ => {
-            let error = ParseError::InvalidEscape(pos, c);
-            Err(error)
-        }
-    }
-}
-
-/// convert  `+`, `*` or `?` to AST
-fn parse_plus_star_question(
-    seq: &mut Vec<AST>,
-    ast_type: PSQ,
-    pos: usize,
-) -> Result<(), ParseError> {
+/// - convert  `+`, `*` or `?` to AST that wraos the previous sequence
+/// - return `Err` if no previous sequences in `seq`
+fn eat_plus_star_question(seq: &mut Vec<AST>, ast_type: PSQ, pos: usize) -> Result<(), ParseError> {
     if let Some(prev) = seq.last_mut() {
         let ast = match ast_type {
             PSQ::Plus => AST::Plus(Box::new(prev.clone())),
@@ -196,6 +195,14 @@ fn parse_plus_star_question(
         Ok(())
     } else {
         Err(ParseError::NoPrev(pos))
+    }
+}
+
+/// escape characters
+fn parse_escape(pos: usize, c: char) -> Result<AST, ParseError> {
+    match Identifier::from(c) {
+        Some(_) => Ok(AST::Char(c)),
+        None => Err(ParseError::InvalidEscape(pos, c)),
     }
 }
 
@@ -228,6 +235,8 @@ fn fold_or(mut seq_or: Vec<AST>) -> Option<AST> {
 
 #[cfg(test)]
 mod tests {
+    use strum::IntoEnumIterator;
+
     use crate::test_each;
 
     use super::*;
@@ -244,44 +253,72 @@ mod tests {
             assert_eq!(ast, case.expected);
         },
         "1" => TestFoldOrCase {
-            input: vec![AST::Char('a'), AST::Char('b'), AST::Char('c')],
+            input: vec![AST::Char('a'), AST::Char('b')],
             expected: Some(AST::Or(
                 Box::new(AST::Char('a')),
-                Box::new(AST::Or(Box::new(AST::Char('b')), Box::new(AST::Char('c')),)),
+                Box::new(AST::Char('b')),
             )),
         },
         "2" => TestFoldOrCase {
+            input: vec![AST::Char('a'), AST::Char('b'), AST::Char('c'), AST::Char('d')],
+            expected: Some(AST::Or(
+                Box::new(AST::Char('a')),
+                Box::new(AST::Or(
+                    Box::new(AST::Char('b')),
+                    Box::new(AST::Or(
+                        Box::new(AST::Char('c')),
+                        Box::new(AST::Char('d')),
+                    )),
+                )),
+            )),
+        },
+        "3" => TestFoldOrCase {
             input: vec![AST::Char('a')],
             expected: Some(AST::Char('a')),
         },
-        "3" => TestFoldOrCase {
+        "4" => TestFoldOrCase {
             input: vec![],
             expected: None,
         },
     );
 
-    struct TestPlusCase {
+    #[test]
+    fn test_parse_escape_valid() {
+        for i in Identifier::iter() {
+            let i = i.into();
+            let ast = parse_escape(0, i);
+            assert_eq!(ast, Ok(AST::Char(i)));
+        }
+    }
+
+    #[test]
+    fn test_parse_escape_invalid() {
+        let ast = parse_escape(0, 'a');
+        assert_eq!(ast, Err(ParseError::InvalidEscape(0, 'a')));
+    }
+
+    struct TestParseCase {
         input: &'static str,
         expected: Result<AST, Box<ParseError>>,
     }
 
     test_each!(
-        test_plus,
-        |case: TestPlusCase| {
+        test_parse,
+        |case: TestParseCase| {
             let ast = parse(case.input);
             assert_eq!(ast, case.expected);
         },
-        "1" => TestPlusCase {
+        "plus_1" => TestParseCase {
             input: "a+",
             expected: Ok(AST::Seq(vec![
                 AST::Plus(Box::new(AST::Char('a')))
             ])),
         },
-        "2" => TestPlusCase {
+        "plus_2" => TestParseCase {
             input: "+",
             expected: Err(Box::new(ParseError::NoPrev(0))),
         },
-        "3" => TestPlusCase {
+        "plus_3" => TestParseCase {
             input: "abc+",
             expected: Ok(AST::Seq(vec![
                 AST::Char('a'),
@@ -289,26 +326,13 @@ mod tests {
                 AST::Plus(Box::new(AST::Char('c')))
             ])),
         },
-    );
-
-    struct TestStarCase {
-        input: &'static str,
-        expected: Result<AST, Box<ParseError>>,
-    }
-
-    test_each!(
-        test_star,
-        |case: TestStarCase| {
-            let ast = parse(case.input);
-            assert_eq!(ast, case.expected);
-        },
-        "1" => TestStarCase {
+        "star_1" => TestParseCase {
             input: "a*",
             expected: Ok(AST::Seq(vec![
                 AST::Star(Box::new(AST::Char('a')))
             ])),
         },
-        "2" => TestStarCase {
+        "star_2" => TestParseCase {
             input: "abc*",
             expected: Ok(AST::Seq(vec![
                 AST::Char('a'),
@@ -316,13 +340,178 @@ mod tests {
                 AST::Star(Box::new(AST::Char('c')))
             ])),
         },
-        "3" => TestStarCase {
+        "star_3" => TestParseCase {
             input: "a**",
             expected: Ok(AST::Seq(vec![
                 AST::Star(Box::new(
                     AST::Star(Box::new(AST::Char('a')))
                 ))
             ])),
+        },
+        "question_1" => TestParseCase {
+            input: "a?",
+            expected: Ok(AST::Seq(vec![
+                AST::Question(Box::new(AST::Char('a')))
+            ])),
+        },
+        "question_2" => TestParseCase {
+            input: "abc?",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+                AST::Char('b'),
+                AST::Question(Box::new(AST::Char('c')))
+            ])),
+        },
+        "question_3" => TestParseCase {
+            input: "a??",
+            expected: Ok(AST::Seq(vec![
+                AST::Question(Box::new(
+                    AST::Question(Box::new(AST::Char('a')))
+                ))
+            ])),
+        },
+        "or_1" => TestParseCase {
+            input: "a|b",
+            expected: Ok(AST::Or(
+                Box::new(AST::Seq(vec![AST::Char('a')])),
+                Box::new(AST::Seq(vec![AST::Char('b')])),
+            )),
+        },
+        "or_2" => TestParseCase {
+            input: "\\|\\*",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('|'),
+                AST::Char('*'),
+            ])),
+        },
+        "or_3" => TestParseCase {
+            input: "\\\\|\\*",
+            expected: Ok(AST::Or(
+                Box::new(AST::Seq(vec![AST::Char('\\')])),
+                Box::new(AST::Seq(vec![AST::Char('*')])),
+            )),
+        },
+        "or_empty_1" => TestParseCase {
+            input: "a|",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('a'),
+            ])),
+        },
+        "or_empty_2" => TestParseCase {
+            input: "a||",
+            expected: Err(Box::new(ParseError::NoPrev(2))),
+        },
+        "or_empty_3" => TestParseCase {
+            input: "\\\\|||||",
+            expected: Err(Box::new(ParseError::NoPrev(3))),
+        },
+        "escape_plus_1" => TestParseCase {
+            input: "\\+",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('+')
+            ])),
+        },
+        "escape_plus_2" => TestParseCase {
+            input: "\\\\+",
+            expected: Ok(AST::Seq(vec![
+                AST::Plus(Box::new(AST::Char('\\'))),
+            ])),
+        },
+        "escape_plus_3" => TestParseCase {
+            input: "\\\\\\+",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+                AST::Char('+'),
+            ])),
+        },
+        "escape_star_1" => TestParseCase {
+            input: "\\*",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('*')
+            ])),
+        },
+        "escape_star_2" => TestParseCase {
+            input: "\\\\*",
+            expected: Ok(AST::Seq(vec![
+                AST::Star(Box::new(AST::Char('\\'))),
+            ])),
+        },
+        "escape_star_3" => TestParseCase {
+            input: "\\\\\\*",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+                AST::Char('*'),
+            ])),
+        },
+        "escape_question_1" => TestParseCase {
+            input: "\\?",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('?'),
+            ])),
+        },
+        "escape_question_2" => TestParseCase {
+            input: "\\\\?",
+            expected: Ok(AST::Seq(vec![
+                AST::Question(Box::new(AST::Char('\\'))),
+            ])),
+        },
+        "escape_question_3" => TestParseCase {
+            input: "\\\\\\?",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+                AST::Char('?'),
+            ])),
+        },
+        "escape_or_1" => TestParseCase {
+            input: "\\|",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('|'),
+            ])),
+        },
+        "escape_or_2" => TestParseCase {
+            input: "\\\\|",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+            ])),
+        },
+        "escape_left_paren_1" => TestParseCase {
+            input: "\\(",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('('),
+            ])),
+        },
+        "escape_right_paren_1" => TestParseCase {
+            input: "\\)",
+            expected: Ok(AST::Seq(vec![
+                AST::Char(')'),
+            ])),
+        },
+        "escape_escape_1" => TestParseCase {
+            input: "\\",
+            expected: Err(Box::new(ParseError::Empty)),
+        },
+        "escape_escape_2" => TestParseCase {
+            input: "\\\\",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+            ])),
+        },
+        "escape_escape_3" => TestParseCase {
+            input: "\\\\\\",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+            ])),
+        },
+        "escape_escape_4" => TestParseCase {
+            input: "\\\\\\\\",
+            expected: Ok(AST::Seq(vec![
+                AST::Char('\\'),
+                AST::Char('\\'),
+            ])),
+        },
+        "escape_escape_5" => TestParseCase {
+            input: "\\a",
+            expected: Err(Box::new(ParseError::InvalidEscape(1, 'a'))),
         },
     );
 }
