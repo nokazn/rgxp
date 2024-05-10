@@ -2,6 +2,7 @@ use core::fmt;
 use std::fmt::{Display, Formatter};
 
 mod codegen;
+mod evaluator;
 pub mod parser;
 
 #[derive(Debug)]
